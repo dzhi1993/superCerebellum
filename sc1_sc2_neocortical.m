@@ -3,14 +3,16 @@ function varargout=sc1_sc2_neocortical(what,varargin)
 % This is modernized from the analysis in sc1_sc2_imana, in that it uses
 % the new FS_LR template
 
-% baseDir    = '/Volumes/MotorControl/data/super_cerebellum_new';
-baseDir    = 'Z:\data\super_cerebellum_new';
+baseDir    = 'D:/data';
+rootDir    = 'Z:\data\super_cerebellum_new';
 wbDir      = fullfile(baseDir,'sc1','surfaceWB');
 fsDir      = fullfile(baseDir,'sc1','surfaceFreesurfer');
 atlasDir   = '~/Data/Atlas_templates/standard_mesh';
 anatomicalDir = fullfile(baseDir,'sc1','anatomicals');
 regDir     = fullfile(baseDir,'sc1','RegionOfInterest');
-glmDir      = 'GLM_firstlevel_4';
+resDir     =  'D:\python_workspace\brain_parcellation_project\agglomerative clustering\cortex_clustering_results';
+resDir2    =  'D:\python_workspace\brain_parcellation_project\agglomerative clustering\subject_clustering_results';
+glmDir     = 'GLM_firstlevel_4';
 studyDir  = {'sc1','sc2'};
 Hem       = {'L','R'};
 hemname   = {'CortexLeft','CortexRight'};
@@ -75,7 +77,7 @@ switch(what)
                 end;
             end;
         end
-    case 'SURF:map_con'          % 1. Step: Map con / ResMS (.nii) onto surface (.gifti)
+    case 'SURF:map_con'         % STEP 11.5: Map con / ResMS (.nii) onto surface (.gifti)
         sn    = returnSubjs;     % subjNum
         study = [1 2];
         glm  = 4;     % glmNum
@@ -169,13 +171,13 @@ switch(what)
                 for st=[1 2]
                     G{st}=gifti(fullfile(surfDir,sprintf('%s.%s.%s.con.%s.func.gii',subj_name{s},Hem{h},studyDir{st},resolution)));
                     N=size(G{st}.cdata,1);
-                    wcon{st} = [G{st}.cdata(:,2:end-1) zeros(N,1)]; % Throw out instruction and add rest
-                    Ts = getrow(T,T.StudyNum==st);                   % Get info of the contrast for this experiment
-                    wcon{st}=bsxfun(@minus,wcon{st},mean(wcon{st}(:,Ts.overlap==1),2)); % REmovemean of the shared conditions 
+                    wcon{st} = [G{st}.cdata(:,2:end-1) zeros(N,1)]; % Add rest
+                    Ts = getrow(T,T.StudyNum==st);
+                    wcon{st}=bsxfun(@minus,wcon{st},mean(wcon{st}(:,Ts.overlap==1),2));
                 end;
-                resMS=(G{1}.cdata(:,end)+G{1}.cdata(:,end))/2;  % Pool the residual mean square variances across experiments 
-                W = [wcon{1} wcon{2}];                          % Concatinate the data 
-                W = bsxfun(@rdivide,W,sqrt(resMS));             % Common noise normalization by sqrt of resMS
+                resMS=(G{1}.cdata(:,end)+G{1}.cdata(:,end))/2;
+                W = [wcon{1} wcon{2}];
+                W = bsxfun(@rdivide,W,resMS); % Common noise normalization
                 outfile = fullfile(surfDir,sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution));
                 Go=surf_makeFuncGifti(W,'columnNames',T.condNames,'anatomicalStruct',hemname{h});
                 save(Go,outfile);
@@ -185,11 +187,11 @@ switch(what)
     case 'SURF:groupFiles'
         hemis=[1 2];
         sn = returnSubjs;
-        cd(fullfile(wbDir,'group32k'));
+        cd(fullfile(wbDir,'group164k'));
         for h=hemis
             inputFiles = {};
             for s=1:length(sn)
-                inputFiles{s}  = fullfile(wbDir, subj_name{sn(s)},sprintf('%s.%s.wcon.32k.func.gii',subj_name{sn(s)},Hem{h}));
+                inputFiles{s}  = fullfile(wbDir, subj_name{sn(s)},sprintf('%s.%s.wcon.func.gii',subj_name{sn(s)},Hem{h}));
                 columnName{s} = subj_name{sn(s)};
             end;
             groupfile=sprintf('group.wcon.%s.func.gii',Hem{h});
@@ -209,6 +211,21 @@ switch(what)
             system(com);
         end;
         delete('temp.func.gii');
+    case 'SURF:indvSmooth'
+        kernel =3;
+        for sn = returnSubjs
+            cd(fullfile(rootDir,'sc1','surfaceWB',subj_name{sn}));
+            for h=1:2
+                fname = sprintf('%s.%s.wcon.32k.func.gii',subj_name{sn},Hem{h});
+                oname = sprintf('%s.%s.swcon.32k.func.gii',subj_name{sn},Hem{h});
+                A=gifti(fname);
+                A.cdata(isnan(sum(A.cdata,2)),:)=0;
+                save(A,'temp.func.gii');
+                com = sprintf('wb_command -metric-smoothing Z:/data/super_cerebellum_new/sc1/surfaceWB/group32k/fs_LR.32k.%s.midthickness.surf.gii temp.func.gii %d %s -fix-zeros',Hem{h},kernel,oname);
+                system(com);
+            end
+            delete('temp.func.gii');
+        end
     case 'SURF:resample32k'  % Resample functional data from group164 to group32
         hemis=[1 2];
         sn = [2,3,4];
@@ -222,25 +239,26 @@ switch(what)
         end;
     case 'SURF:voxel2vertex' % Tansforms voxels-based data (from regions_cortex.mat) to vertices 
         % Data should be P(voxel) x K (conditions / values)
-        sn   = []; 
-        hem  = []; 
+        sn   = [];
+        hem  = [];
+        data = [];
         numVert = 32492; 
         vararginoptions(varargin,{'data','hem','sn'});
         
         load(fullfile(rootDir,'sc1','RegionOfInterest','data',subj_name{sn},sprintf('regions_cortex.mat'))); % 'regions' are defined in 'ROI_define'
         
-                
         % Figure out mapping from Nodes to voxels in region 
         N = length(R{hem}.linvoxidxs); 
         MAP = nan(size(R{hem}.location2linvoxindxs)); % Make a structure of vertices (without medial wall to indices in ROI structure)
         for i=1:N
             MAP(R{hem}.location2linvoxindxs==R{hem}.linvoxidxs(i))=i;
-        end;
+        end
 
         vData = nan(numVert,size(data,2)); % Make outout data structure 
         for i=1:length(R{hem}.location)
-            vData(R{hem}.location(i),:)=nanmean(data(MAP(i,:),:),1);
-        end; 
+            %vData(R{hem}.location(i),:)=nanmean(data(rmmissing(MAP(i,:)),:),1);
+            vData(R{hem}.location(i),:)=mode(data(rmmissing(MAP(i,:)),:)) + 1; % for parcels
+        end
         varargout = {vData};
     case 'SURF:getAllData' % returns all cortical data - zero centered
         A=gifti(fullfile(wbDir,'group32k','Icosahedron-362.32k.L.label.gii')); % Determine medial wall
@@ -257,6 +275,39 @@ switch(what)
         Data.data = bsxfun(@minus,Data.data ,mean(Data.data,2));
         Data = getrow(Data,~isnan(sum(Data.data,2)));
         varargout={Data};
+    case 'SURF:randomSmoothCon'
+        sn = returnSubjs;     % subjNum
+        hem = [1 2];
+        verticesNum = 32492;
+        conNum = 61;
+        mu = 0; % the default mean for generating random gaussian numbers
+        sigma = 1; % the default sigma for generating random gaussian numbers
+        R = [-2 2]; % the default range if type is uniformly
+        kernel = 3;
+        type = 'gaussian'; % default random map fits gaussian distribution
+        resolution = '32k';
+        vararginoptions(varargin,{'sn','mu','sigma','range','hem','verticesNum','conNum','type','resolution'});       
+        
+        for s=sn
+            for h=hem
+                outfile = fullfile(rootDir,'sc1','surfaceWB',subj_name{s},sprintf('%s.%s.srcon.%s.func.gii',subj_name{s},Hem{h},resolution));   
+                switch type
+                    case 'gaussian' % if the random numbers fit gaussian distribution
+                        random = normrnd(mu,sigma,[verticesNum,conNum]);
+                    case 'uniform' % if the random numbers are uniformly distributed
+                        for i=1:conNum
+                            col = min(R) + rand(verticesNum, 1)*range(R);
+                            random(:,i) = col;
+                        end
+                end
+                
+                G = surf_makeFuncGifti(single(random));
+                save(G,'temp.func.gii');
+                com = sprintf('wb_command -metric-smoothing Z:/data/super_cerebellum_new/sc1/surfaceWB/group32k/fs_LR.32k.%s.midthickness.surf.gii temp.func.gii %d %s -fix-zeros',Hem{h},kernel,outfile);
+                system(com);
+            end
+            delete('temp.func.gii');
+        end
     case 'PARCEL:annot2labelgii' % Make an annotation file (freesurfer) into a Gifti
         filename = varargin{1};
         for i=1:2
@@ -292,6 +343,42 @@ switch(what)
             G = surf_makeLabelGifti(data,'anatomicalStruct',hemname{h},'labelRGBA',[colorcube(13) ones(13,1)]);
             save(G,outfilename);
         end;
+    case 'PARCEL:Spec'        % Make the label.gii for Spectral clustering results
+    % hem=[1 2];
+    clusters = 7:25;
+    taskSet = 2;
+    vararginoptions(varargin,{'clusters'});
+    %for s = returnSubjs
+        for ts = taskSet
+            for k = 1:length(clusters) % The number of clusters are range from 7 to 30
+                infilename = fullfile(resDir,'group',sprintf('sc%d',ts),sprintf('ac_cosine_single_sc%d_%d.mat',ts,clusters(k)));
+                outfilename1 = fullfile(resDir,'group',sprintf('sc%d',ts),'labelGii',sprintf('group_ac_%d.32k.sc%d.%s.label.gii',clusters(k),ts,Hem{1}));
+                outfilename2 = fullfile(resDir,'group',sprintf('sc%d',ts),'labelGii',sprintf('group_ac_%d.32k.sc%d.%s.label.gii',clusters(k),ts,Hem{2}));
+                load(infilename);
+                G1 = surf_makeLabelGifti(parcels_L,'anatomicalStruct',hemname{1},'labelRGBA',[colorcube(clusters(k)+1) ones(clusters(k)+1,1)]);
+                G2 = surf_makeLabelGifti(parcels_R,'anatomicalStruct',hemname{2},'labelRGBA',[colorcube(clusters(k)+1) ones(clusters(k)+1,1)]);
+                save(G1,outfilename1);
+                save(G2,outfilename2);
+            end
+        end
+    %end
+    case 'PARCEL:SpecIdv'        % Make the label.gii for Spectral clustering results
+    % hem=[1 2];
+    sn = returnSubjs;
+    clusters = [];
+    vararginoptions(varargin,{'clusters', 'sn'});
+    for s = sn
+        for k = 1:length(clusters) % The number of clusters are range from 7 to 30
+            infilename = fullfile(resDir,subj_name{s},sprintf('spec_cosine_%d.mat',clusters(k)));
+            outfilename1 = fullfile(resDir,subj_name{s},'labelGii',sprintf('Spec_%d.32k.%s.label.gii',clusters(k), Hem{1}));
+            outfilename2 = fullfile(resDir,subj_name{s},'labelGii',sprintf('Spec_%d.32k.%s.label.gii',clusters(k), Hem{2}));
+            load(infilename);
+            G1 = surf_makeLabelGifti(parcels_L,'anatomicalStruct',hemname{1},'labelRGBA',[colorcube(clusters(k)+1) ones(clusters(k)+1,1)]);
+            G2 = surf_makeLabelGifti(parcels_R,'anatomicalStruct',hemname{2},'labelRGBA',[colorcube(clusters(k)+1) ones(clusters(k)+1,1)]);
+            save(G1,outfilename1);
+            save(G2,outfilename2);
+        end
+    end
     case 'DCBC:computeDistances' % Compute individual Dijkstra distances between vertices
         sn=returnSubjs;
         hem = [1 2];
@@ -362,7 +449,8 @@ switch(what)
         RR=[];
         distFile = 'distAvrg_sp';
         icoRes = 2562;
-        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile','icoRes'});
+        rate = 5;            % Indicate how many small bins in each of the bins
+        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile','icoRes','rate'});
         D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
         numBins = numel(bins)-1;
         for h=hem
@@ -370,28 +458,28 @@ switch(what)
             
             % Now find the pairs that we care about to safe memory 
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            % CHANGE: Exclude only medial walll! 
+            % CHANGE: Exclude only medial wall! 
             % The node indices of medial wall are defined by taking the union of seven existing parcellations, including
             % 'Glasser','Yeo17','Yeo7','Power2011','Yeo2015','Desikan', and 'Dextrieux', which stored as external 
             % .mat files "medialWallIndex_%hem.mat" for both hems.
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            mw = load(fullfile(wbDir, sprintf('group%s', resolution), sprintf('medialWallIndex_%s.mat', Hem{h})));
-            labels = gifti(fullfile(wbDir, sprintf('group%s', resolution), sprintf('Icosahedron-%d.%s.%s.label.gii',icoRes,resolution,Hem{h})));
+            % mw = load(fullfile(wbDir, sprintf('group%s', resolution), sprintf('medialWallIndex_%s.mat', Hem{h})));
+            mw = gifti(fullfile(wbDir, sprintf('group%s', resolution), sprintf('Icosahedron-%d.%s.%s.label.gii',icoRes,resolution,Hem{h})));
             
             % Here, we use it to find the union with the label-0 of Icosahedron-(icoRes) as our final medial wall
             % vertIdx is the indices that we want (without medial wall)
-            vertIdx = setdiff(1:size(avrgDs), union(mw.mwIdx, find(labels.cdata(:,1)==0))); 
+            vertIdx = setdiff(1:size(avrgDs), find(mw.cdata(:,1)==0)); 
             avrgDs = avrgDs(vertIdx,vertIdx);
             par    = parcel(vertIdx,h);
             % END CHANGE 
             
             [row,col,avrgD]=find(avrgDs);
             inSp = sub2ind(size(avrgDs),row,col);
-            sameReg=(bsxfun(@ne,par',par)+1);
+            sameReg=(bsxfun(@ne,par',par)+1); % 1 same region, 2 different region
             sameReg=sameReg(inSp);
             clear avrgDs par;
-            for ts = taskSet;
-                switch condType,
+            for ts = taskSet
+                switch condType
                     case 'unique'
                         % if funcMap - only evaluate unique tasks in sc1 or sc2
                         condIdx=find(D.overlap == 0 & D.StudyNum == ts); % get index for unique tasks
@@ -401,7 +489,7 @@ switch(what)
                 for s=sn
                     % CHANGE: This should be re-written to start from the wcon data
                     % Start 
-                    A=gifti(fullfile(wbDir,subj_name{s},sprintf('%s.%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},studyDir{ts},resolution)));
+                    A=gifti(fullfile(rootDir,'sc1','surfaceWB',subj_name{s},sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution)));
                     
                     % End CHANGE 
                     Data = A.cdata(vertIdx,condIdx); % Take the right subset
@@ -414,11 +502,13 @@ switch(what)
                     
                     VAR = (SD'*SD);
                     COV = Data'*Data/K;
+                    %COR = corrcoef(Data); % Try different way to calculate the corrlation coefficient
                     fprintf('%d',s);
-                    for bw=[1 2]
-                        for i=1:numBins
+                    for i=1:numBins
+                        for bw=[1 2] % 1-within, 2-between
                             fprintf('.');
-                            in = i+(bw-1)*numBins;
+                            %in = i+(bw-1)*numBins;
+                            in = 2*(i-1)+bw;
                             inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
                             R.SN(in,1)      = s;
                             R.hem(in,1)     = h;
@@ -429,102 +519,209 @@ switch(what)
                             R.bin(in,1)     = i;
                             R.distmin(in,1) = bins(i);
                             R.distmax(in,1) = bins(i+1);
-                            R.meanVAR(in,1) = full(nanmean(VAR(inSp(inBin))));
+                                        
+                            R.meanCOR(in,1) = full(nanmean( COV(inSp(inBin)) ./ sqrt(VAR(inSp(inBin))) ));
                             R.meanCOV(in,1) = full(nanmean(COV(inSp(inBin))));
-                        end;
-                    end;
+                            R.meanVAR(in,1) = full(nanmean(VAR(inSp(inBin))));
+                            %R.meanCOR(in,1) = full(nanmean(COR(inSp(inBin)))); % Add the mean corrcoef in this bin
+                        end
+                        %%%%%%%%%%%%%%% Changes to eliminate the positive bias %%%%%%%%%%%%%%%
+                        miniBin=(bins(i+1)-bins(i))/rate;
+                        corr_W=[];
+                        corr_B=[];        
+                        ratio_W=[];
+                        ratio_B=[];
+                        for j=1:rate
+                            inMiniBin_W = avrgD>(bins(i)+(j-1)*miniBin) & avrgD<=(bins(i)+j*miniBin) & sameReg==1; % within
+                            inMiniBin_B = avrgD>(bins(i)+(j-1)*miniBin) & avrgD<=(bins(i)+j*miniBin) & sameReg==2; % between
+                            inBin_W = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==1;
+                            inBin_B = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==2;
+                            N_W = sum(inBin_W(:));
+                            N_B = sum(inBin_B(:));
+                            %this_N = sum(inMiniBin_W(:))+sum(inMiniBin_B(:));
+                            %this_w_ratio = (sum(inMiniBin_B(:))/N_B)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2);
+                            %this_b_ratio = (sum(inMiniBin_W(:))/N_W)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2);
+                            
+                            this_w_ratio = 1/((sum(inMiniBin_W(:))/N_W)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2));
+                            this_b_ratio = 1/((sum(inMiniBin_B(:))/N_B)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2));
+                            
+                            this_corrW = this_w_ratio*full(nanmean( COV(inSp(inMiniBin_W)) ./ sqrt(VAR(inSp(inMiniBin_W))) ));
+                            this_corrB = this_b_ratio*full(nanmean( COV(inSp(inMiniBin_B)) ./ sqrt(VAR(inSp(inMiniBin_B))) ));
+                            corr_W = [corr_W this_corrW];
+                            corr_B = [corr_B this_corrB];
+                            
+                            ratio_W = [ratio_W this_w_ratio];
+                            ratio_B = [ratio_B this_b_ratio];
+                        end
+                        R.adjustMeanCOR(2*(i-1)+1,1) = nansum(corr_W)/nansum(ratio_W);
+                        R.adjustMeanCOR(2*(i-1)+2,1) = nansum(corr_B)/nansum(ratio_B);
+                    end
                     clear VAR COV;
                     
-                    
                     R.corr=R.meanCOV./sqrt(R.meanVAR);
+                    fn = fieldnames(R);
+    
+                    for idx = 1:numel(fn)
+                        fni = string(fn(idx));
+                        field = R.(fni);
+                        odd_sub = field(1:2:end,:);
+                        even_sub = field(2:2:end,:);
+                        R.(fni) = [odd_sub; even_sub];
+                        clear odd_sub even_sub
+                    end
+                    
                     fprintf('\n');
                     RR = addstruct(RR,R);
-                end;
-            end;
-        end;
+                    clear R;
+                end
+            end
+        end
         varargout={RR};
     case 'EVAL:doEval'           % Recipe for producing the DCBC evaluation results
-        %         for h=1:2
-        %             A=gifti(sprintf('Yeo_JNeurophysiol11_7Networks.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Yeo7_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Yeo_JNeurophysiol11_17Networks.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Yeo17_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Glasser_2016.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         parcel(isnan(parcel))=0;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Glasser_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Icosahedron-42.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Icosahedron42_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Icosahedron-162.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Icosahedron162_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Icosahedron-362.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Icosahedron362_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Power2011.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Power2011_Sphere_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Desikan.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Desikan_all.mat','-struct','T');
-        %
-        %         for h=1:2
-        %             A=gifti(sprintf('Dextrieux.32k.%s.label.gii',Hem{h}));
-        %             parcel(:,h)=A.cdata;
-        %         end;
-        %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        %         save('Eval_Dextrieux_all.mat','-struct','T');
+        clusters = 7:30;
+        sn = returnSubjs;
+        taskSet = [1 2];
+        evalSet = [2 1];
+        condType = 'unique';
+        type = 'group';
+        vararginoptions(varargin,{'clusters','condType','type','sn','taskSet'});
         
+%         % Yeo 7
+%         fprintf('Evaluating Yeo 7 ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Yeo_JNeurophysiol11_7Networks.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Yeo7_Sphere_sc1_%s.mat',condType),'-struct','T');
+%         
+%         % Yeo 17
+%         fprintf('Evaluating Yeo 17 ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Yeo_JNeurophysiol11_17Networks.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Yeo17_Sphere_sc1_%s.mat',condType),'-struct','T');
+%         
+%         % Yeo 2015
+%         fprintf('Evaluating Yeo 2015 ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Yeo_CerCor2015_12Comp.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Yeo2015_Sphere_sc1_%s.mat',condType),'-struct','T');
+%         
+%         % Glasser 2016
+%         fprintf('Evaluating Glasser 2016 ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Glasser_2016.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end
+%         parcel(isnan(parcel))=0;
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Glasser_Sphere_sc1_%s.mat',condType),'-struct','T');
+        
+        
+% %         for h=1:2
+% %             A=gifti(sprintf('Icosahedron-42.32k.%s.label.gii',Hem{h}));
+% %             parcel(:,h)=A.cdata;
+% %         end;
+% %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
+% %         save('Eval_Icosahedron42_Sphere_all.mat','-struct','T');
+% % 
+% %         for h=1:2
+% %             A=gifti(sprintf('Icosahedron-162.32k.%s.label.gii',Hem{h}));
+% %             parcel(:,h)=A.cdata;
+% %         end;
+% %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
+% %         save('Eval_Icosahedron162_Sphere_all.mat','-struct','T');
+% % 
+% %         for h=1:2
+% %             A=gifti(sprintf('Icosahedron-362.32k.%s.label.gii',Hem{h}));
+% %             parcel(:,h)=A.cdata;
+% %         end;
+% %         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
+% %         save('Eval_Icosahedron362_Sphere_all.mat','-struct','T');
+        
+        % Power 2011
+        fprintf('Evaluating Power 2011 ... \n');
         for h=1:2
-            A=gifti(sprintf('Yeo_CerCor2015_12Comp.32k.%s.label.gii',Hem{h}));
+            A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Power2011.32k.%s.label.gii',Hem{h})));
             parcel(:,h)=A.cdata;
-        end;
-        T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','all','distFile','distSphere_sp');
-        save('Eval_Yeo2015_Sphere_all.mat','-struct','T');
+        end
+        T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType',condType,'distFile','distSphere_sp');
+        save(sprintf('Eval_Power2011_Sphere_sc1sc2_%s_randomMap.mat',condType),'-struct','T');
+%         
+%         % Desikan
+%         fprintf('Evaluating Desikan ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Desikan.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Desikan_Sphere_sc1_%s.mat',condType),'-struct','T');
+%         
+%         % Dextrieux
+%         fprintf('Evaluating Dextrieux ... \n');
+%         for h=1:2
+%             A=gifti(fullfile(rootDir,'sc1','surfaceWB','group32k',sprintf('Dextrieux.32k.%s.label.gii',Hem{h})));
+%             parcel(:,h)=A.cdata;
+%         end;
+%         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',1,'distFile','distSphere_sp');
+%         save(sprintf('Eval_Dextrieux_Sphere_sc1_%s.mat',condType),'-struct','T');
+        
+%         if strcmp(type,'group')
+%             % group Spectral clustering 
+%             fprintf('Start evaluating agglomerative clustering results ... \n');
+%             for ts = taskSet
+%                 for k=1:length(clusters)
+%                     for h=1:2
+%                         infile = fullfile(resDir,'group',sprintf('sc%d',ts),'labelGii', sprintf('group_ac_%d.32k.sc%d.%s.label.gii',clusters(k),ts,Hem{h}));
+%                         A=gifti(infile);
+%                         parcel(:,h)=A.cdata;
+%                     end
+%                     T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'condType','unique','taskSet',evalSet(ts),'distFile','distSphere_sp');
+%                     save(fullfile(resDir,'group',sprintf('sc%d',ts),'Eval',sprintf('Eval_ac_Sphere_sc%d_unique_%d.mat',ts,clusters(k))),'-struct','T');
+%                 end
+%             end
+%         else
+%             % individual Spectral clustering 
+%             for ts = taskSet
+%                 fprintf('Start evaluating experiment %d on experiment %d ... \n', ts, evalSet(ts));
+%                 for s = sn
+%                     % fprintf('Start evaluating subject %d ... \n', s);
+%                     for k=1:length(clusters)
+%                         fprintf('Evaluating subjuect %d, k=%d ... \n',s,clusters(k));
+%                         for h=1:2
+%                             infile = fullfile(resDir2,sprintf('sc%d',ts),subj_name{s},'labelGii',sprintf('%s_Spec_%d.32k.sc%d.%s.label.gii',subj_name{s},clusters(k),ts,Hem{h}));
+%                             A=gifti(infile);
+%                             parcel(:,h)=A.cdata;
+%                         end
+%                         % T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'sn',s,'parcel',parcel,'condType','all','distFile','distSphere_sp');
+%                         T=sc1_sc2_neocortical('Eval:DCBC','hem',[1 2],'parcel',parcel,'sn',s,'condType','unique','taskSet',evalSet(ts),'distFile','distSphere_sp');
+%                         save(fullfile(resDir2,sprintf('sc%d',ts),subj_name{s},'Eval',sprintf('Eval_Spec_Sphere_unique_%d.mat', clusters(k))),'-struct','T');
+%                     end
+%                 end
+%             end
+%         end
     case 'EVAL:plotSingle'       % Plots a single evaluation
         toPlot = 'Power2011';
         condType='all';
+        clusters = 7;
         CAT.linecolor={'k','r'};
         CAT.linestyle={'-','-'};
         CAT.linewidth=2;
         CAT.markertype='none';
         CAT.errorcolor={'k','r'};
-        vararginoptions(varargin,{'toPlot','condType'});
+        vararginoptions(varargin,{'toPlot','condType','clusters'});
         
-        T=load(['Eval_' toPlot '_Sphere_' condType '.mat']);
+        if strcmp(toPlot,'Spec')
+            T=load(fullfile(wbDir, 'group32k', sprintf('Eval_%s_Sphere_%s_%d.mat', toPlot,condType,clusters)));
+        else
+            T=load(['Eval_' toPlot '_Sphere_' condType '.mat']);
+        end
         D=tapply(T,{'bin','SN','distmin','distmax','bwParcel'},{'corr'},{'avrDist'});
         D.binC = (D.distmin+D.distmax)/2;
         lineplot(D.binC,D.corr,'split',D.bwParcel,'CAT',CAT);
@@ -535,7 +732,163 @@ switch(what)
         keyboard;
     case 'EVAL:plotEval'         % Comparision plot of different parcellations
         g1 = [0.5 0.5 0.5]; % Gray 1
-        toPlot={'Glasser','Yeo17','Yeo7','Power2011','Yeo2015','Desikan','Dextrieux','Icosahedron362'};
+        % toPlot={'Glasser','Yeo17','Yeo7','Power2011','Yeo2015','Desikan','Dextrieux','Icosahedron362', 'Spec'};
+        %toPlot={'Yeo7','Yeo17','Power2011','Yeo2015','Glasser','AcGroup'};
+        toPlot={'Icosahedron'};
+        % toPlot={'SpecGroup'};
+        sn=returnSubjs;
+        clusters=17;
+        taskSet=[1 2]; % Either 1 or 2, to specify which dataset used to train
+        evalSet=[2 1];
+        CAT.linecolor={'r','b','b','b','k','g','g',g1};
+        CAT.linestyle={'-',':',':','--','-','-',':',':'};
+        CAT.linewidth=2;
+        CAT.markertype='none';
+        CAT.errorcolor={'r','b','b','b','r','g','g',g1};
+        condType='all';
+        vararginoptions(varargin,{'toPlot','condType', 'clusters','sn','taskSet'});
+        T=[];
+        for i=1:length(toPlot)
+            if strcmp(toPlot{i},'Spec')
+                % D=load(fullfile(wbDir,'group32k', sprintf('Eval_%s_Sphere_%s_%d.mat',toPlot{i},condType, clusters)));
+                % D=load(fullfile(resDir2,'sc1',subj_name{sn},'Eval',sprintf('Eval_%s_Sphere_unique_%d.mat',toPlot{i},clusters)));
+                % D=load(fullfile(resDir,subj_name{sn},'Eval',sprintf('Eval_%s_Sphere_all_%d.mat',toPlot{i},clusters)));
+            elseif strcmp(toPlot{i},'Icosahedron')
+                D.SN=[];
+                D.hem=[];
+                D.studyNum=[];
+                D.N=[];
+                D.avrDist=[];
+                D.bwParcel=[];
+                D.bin=[];
+                D.distmin=[];
+                D.distmax=[];
+                D.meanVAR=[];
+                D.meanCOV=[];
+                D.corr=[];
+                for ts = taskSet
+                    for s = sn
+                        temp=load(fullfile(resDir2,sprintf('sc%d',ts),subj_name{s},'Eval',sprintf('Eval_Spec_Sphere_unique_%d.mat',clusters)));
+                        D.SN=[D.SN;temp.SN];
+                        D.hem=[D.hem;temp.hem];
+                        D.studyNum=[D.studyNum;temp.studyNum];
+                        D.N=[D.N;temp.N];
+                        D.avrDist=[D.avrDist;temp.avrDist];
+                        D.bwParcel=[D.bwParcel;temp.bwParcel];
+                        D.bin=[D.bin;temp.bin];
+                        D.distmin=[D.distmin;temp.distmin];
+                        D.distmax=[D.distmax;temp.distmax];
+                        D.meanVAR=[D.meanVAR;temp.meanVAR];
+                        D.meanCOV=[D.meanCOV;temp.meanCOV];
+                        D.corr=[D.corr;temp.corr];
+                    end
+                end
+            elseif strcmp(toPlot{i},'AcGroup')
+                D1=load(fullfile(resDir,'group',sprintf('sc%d',1),'Eval',sprintf('Eval_ac_Sphere_sc1_unique_%d.mat',clusters)));
+                D2=load(fullfile(resDir,'group',sprintf('sc%d',2),'Eval',sprintf('Eval_ac_Sphere_sc2_unique_%d.mat',clusters)));
+                D.SN=[D1.SN;D2.SN];
+                D.hem=[D1.hem;D2.hem];
+                D.studyNum=[D1.studyNum;D2.studyNum];
+                D.N=[D1.N;D2.N];
+                D.avrDist=[D1.avrDist;D2.avrDist];
+                D.bwParcel=[D1.bwParcel;D2.bwParcel];
+                D.bin=[D1.bin;D2.bin];
+                D.distmin=[D1.distmin;D2.distmin];
+                D.distmax=[D1.distmax;D2.distmax];
+                D.meanVAR=[D1.meanVAR;D2.meanVAR];
+                D.meanCOV=[D1.meanCOV;D2.meanCOV];
+                D.corr=[D1.corr;D2.corr];
+            else
+                D1=load(fullfile(sprintf('Eval_%s_Sphere_sc%d_%s.mat',toPlot{i},1,condType)));
+                D2=load(fullfile(sprintf('Eval_%s_Sphere_sc%d_%s.mat',toPlot{i},2,condType)));
+                D.SN=[D1.SN;D2.SN];
+                D.hem=[D1.hem;D2.hem];
+                D.studyNum=[D1.studyNum;D2.studyNum];
+                D.N=[D1.N;D2.N];
+                D.avrDist=[D1.avrDist;D2.avrDist];
+                D.bwParcel=[D1.bwParcel;D2.bwParcel];
+                D.bin=[D1.bin;D2.bin];
+                D.distmin=[D1.distmin;D2.distmin];
+                D.distmax=[D1.distmax;D2.distmax];
+                D.meanVAR=[D1.meanVAR;D2.meanVAR];
+                D.meanCOV=[D1.meanCOV;D2.meanCOV];
+                D.corr=[D1.corr;D2.corr];
+            end
+            TT=tapply(D,{'bin','SN','distmin','distmax'},{'corr','mean','name','corrB','subset',D.bwParcel==0},...
+                {'corr','mean','name','corrW','subset',D.bwParcel==1});
+            TT.parcel=ones(length(TT.SN),1)*i;
+            T=addstruct(T,TT);
+        end
+        T.DCBC=T.corrB-T.corrW;
+        T.binC = (T.distmin+T.distmax)/2;
+        lineplot(T.binC,T.DCBC,'CAT',CAT,'split',T.parcel,'leg',toPlot);
+        set(gca,'XLim',[0 40],'YLim',[-0.01 0.06],'XTick',[5:5:35]);
+        set(gcf,'PaperPosition',[2 2 3.3 3]);
+        wysiwyg;
+    case 'EVAL:plotIcosahedron'         % Comparision plot of different parcellations
+        g1 = [0.5 0.5 0.5]; % Gray 1
+        %toPlot={'Icosahedron_42','Icosahedron_162','Icosahedron_362','Icosahedron_642','Icosahedron_1002'};
+        toPlot={'Icosahedron_42'};
+        CAT.linecolor={'r','b','b','b','g','k','k',g1};
+        CAT.linestyle={'-','-',':','--','-','-',':','-'};
+        CAT.linewidth=2;
+        CAT.markertype='none';
+        CAT.errorcolor={'r','b','b','b','g','k','k',g1};
+        condType='all';
+        vararginoptions(varargin,{'toPlot','condType'});
+        T=[];
+        for i=1:length(toPlot)
+            D.SN=[];
+            D.hem=[];
+            D.studyNum=[];
+            D.N=[];
+            D.avrDist=[];
+            D.bwParcel=[];
+            D.bin=[];
+            D.distmin=[];
+            D.distmax=[];
+            D.meanVAR=[];
+            D.meanCOV=[];
+            D.meanCOR=[];
+            D.corr=[];
+            D.adjustMeanCOR=[];
+            for s = 1:8
+                temp=load(sprintf('Eval_%s_Sphere_L_%s_%d_rate5.mat',toPlot{i},condType,s));
+                D.SN=[D.SN;temp.SN];
+                D.hem=[D.hem;temp.hem];
+                D.studyNum=[D.studyNum;temp.studyNum];
+                D.N=[D.N;temp.N];
+                D.avrDist=[D.avrDist;temp.avrDist];
+                D.bwParcel=[D.bwParcel;temp.bwParcel];
+                D.bin=[D.bin;temp.bin];
+                D.distmin=[D.distmin;temp.distmin];
+                D.distmax=[D.distmax;temp.distmax];
+                D.meanVAR=[D.meanVAR;temp.meanVAR];
+                D.meanCOV=[D.meanCOV;temp.meanCOV];
+                D.meanCOR=[D.meanCOR;temp.meanCOR];
+                D.corr=[D.corr;temp.corr];
+                D.adjustMeanCOR=[D.adjustMeanCOR;temp.adjustMeanCOR];
+            end
+
+            TT=tapply(D,{'bin','SN','distmin','distmax'},{'adjustMeanCOR','mean','name','corrW','subset',D.bwParcel==0},...
+                {'adjustMeanCOR','mean','name','corrB','subset',D.bwParcel==1}); % Change the name of bwParcel; 0-within, 1-between
+            TT.parcel=ones(length(TT.SN),1)*i;
+            T=addstruct(T,TT);
+        end
+        T.DCBC=T.corrW-T.corrB; % corrB is within, corrW is between in old version
+        T.binC = (T.distmin+T.distmax)/2;    
+        lineplot(T.binC,T.DCBC,'CAT',CAT,'split',T.parcel,'errorcolor','b');
+        
+%         lineplot(T.binC,T.N_W,'CAT',CAT,'split',T.parcel,'linecolor','r','errorcolor','k');
+%         hold on
+%         lineplot(T.binC,T.N_B,'CAT',CAT,'split',T.parcel,'linecolor','b','errorcolor','k');
+        
+        set(gca,'XLim',[0 40],'YLim',[-0.01 0.06],'XTick', [5:5:35]);
+        set(gcf,'PaperPosition',[2 2 3.3 3]);
+        wysiwyg;
+    case 'EVAL:plotSpatial'         % Comparision plot of different parcellations
+        g1 = [0.5 0.5 0.5]; % Gray 1
+        toPlot={'Icosahedron_42'};
         CAT.linecolor={'r','b','b','b','g','k','k',g1};
         CAT.linestyle={'-','-',':','--','-','-',':','-'};
         CAT.linewidth=2;
@@ -546,11 +899,11 @@ switch(what)
         T=[];
         for i=1:length(toPlot)
             D=load(sprintf('Eval_%s_Sphere_%s.mat',toPlot{i},condType));
-            TT=tapply(D,{'bin','SN','distmin','distmax'},{'corr','mean','name','corrB','subset',D.bwParcel==0},...
-                {'corr','mean','name','corrW','subset',D.bwParcel==1});
+            TT=tapply(D,{'bin','SN','distmin','distmax'},{'adjustMeanCOR','mean','name','corrW','subset',D.bwParcel==0},...
+                {'adjustMeanCOR','mean','name','corrB','subset',D.bwParcel==1}); % Change the name of bwParcel; 0-within, 1-between
             TT.parcel=ones(length(TT.SN),1)*i;
             T=addstruct(T,TT);
-        end;
+        end
         T.DCBC=T.corrB-T.corrW;
         T.binC = (T.distmin+T.distmax)/2;
         lineplot(T.binC,T.DCBC,'CAT',CAT,'split',T.parcel,'leg',toPlot);
