@@ -391,23 +391,20 @@ switch(what)
             sameReg=sameReg(inSp);
             clear avrgDs par;
             for ts = taskSet;
-                D1=getrow(D,D.StudyNum==ts);
                 switch condType,
                     case 'unique'
                         % if funcMap - only evaluate unique tasks in sc1 or sc2
-                        condIdx=D1.condNum(D1.overlap==0); % get index for unique tasks
+                        condIdx=find(D.overlap == 0 & D.StudyNum == ts); % get index for unique tasks
                     case 'all'
-                        condIdx=D1.condNum;
+                        condIdx=find(D.StudyNum == ts);
                 end
                 for s=sn
                     % CHANGE: This should be re-written to start from the wcon data
                     % Start 
-                    A=gifti(fullfile(wbDir,subj_name{s},sprintf('%s.%s.%s.con.%s.func.gii',subj_name{s},Hem{h},studyDir{ts},resolution)));
-                    Data = [A.cdata(:,2:end-1) zeros(size(A.cdata,1),1)]; % bRemove intrstuction and add rest 
-                    Data = bsxfun(@rdivide,Data,sqrt(A.cdata(:,end)));      % Noise normalize 
+                    A=gifti(fullfile(wbDir,subj_name{s},sprintf('%s.%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},studyDir{ts},resolution)));
                     
                     % End CHANGE 
-                    Data = Data(vertIdx,condIdx); % Take the right subset
+                    Data = A.cdata(vertIdx,condIdx); % Take the right subset
                     Data = bsxfun(@minus,Data,mean(Data,2));
                     Data = single(Data');
                     [K,P]=size(Data);
