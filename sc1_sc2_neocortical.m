@@ -489,7 +489,7 @@ switch(what)
                 for s=sn
                     % CHANGE: This should be re-written to start from the wcon data
                     % Start 
-                    A=gifti(fullfile(rootDir,'sc1','surfaceWB',subj_name{s},sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution)));
+                    A=gifti(fullfile(baseDir,'sc1','surfaceWB',subj_name{s},sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution)));
                     
                     % End CHANGE 
                     Data = A.cdata(vertIdx,condIdx); % Take the right subset
@@ -498,8 +498,7 @@ switch(what)
                     [K,P]=size(Data);
                     clear A;
                     
-                    SD = sqrt(sum(Data.^2)/K);
-                    
+                    SD = sqrt(sum(Data.^2)/K);              
                     VAR = (SD'*SD);
                     COV = Data'*Data/K;
                     %COR = corrcoef(Data); % Try different way to calculate the corrlation coefficient
@@ -531,6 +530,8 @@ switch(what)
                         corr_B=[];        
                         ratio_W=[];
                         ratio_B=[];
+                        num_W=[];
+                        num_B=[];
                         for j=1:rate
                             inMiniBin_W = avrgD>(bins(i)+(j-1)*miniBin) & avrgD<=(bins(i)+j*miniBin) & sameReg==1; % within
                             inMiniBin_B = avrgD>(bins(i)+(j-1)*miniBin) & avrgD<=(bins(i)+j*miniBin) & sameReg==2; % between
@@ -538,23 +539,26 @@ switch(what)
                             inBin_B = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==2;
                             N_W = sum(inBin_W(:));
                             N_B = sum(inBin_B(:));
-                            %this_N = sum(inMiniBin_W(:))+sum(inMiniBin_B(:));
-                            %this_w_ratio = (sum(inMiniBin_B(:))/N_B)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2);
-                            %this_b_ratio = (sum(inMiniBin_W(:))/N_W)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2);
+                            this_N = sum(inMiniBin_W(:))+sum(inMiniBin_B(:));
                             
                             this_w_ratio = 1/((sum(inMiniBin_W(:))/N_W)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2));
                             this_b_ratio = 1/((sum(inMiniBin_B(:))/N_B)/((sum(inMiniBin_B(:))/N_B + sum(inMiniBin_W(:))/N_W)/2));
                             
-                            this_corrW = this_w_ratio*full(nanmean( COV(inSp(inMiniBin_W)) ./ sqrt(VAR(inSp(inMiniBin_W))) ));
-                            this_corrB = this_b_ratio*full(nanmean( COV(inSp(inMiniBin_B)) ./ sqrt(VAR(inSp(inMiniBin_B))) ));
+                            this_corrW = this_w_ratio*full(nansum( COV(inSp(inMiniBin_W)) ./ sqrt(VAR(inSp(inMiniBin_W))) ));
+                            this_corrB = this_b_ratio*full(nansum( COV(inSp(inMiniBin_B)) ./ sqrt(VAR(inSp(inMiniBin_B))) ));
+                            
+                            num_NaN_W = sum(isnan(COV(inSp(inMiniBin_W)) ./ sqrt(VAR(inSp(inMiniBin_W)))));
+                            num_NaN_B = sum(isnan(COV(inSp(inMiniBin_B)) ./ sqrt(VAR(inSp(inMiniBin_B)))));
                             corr_W = [corr_W this_corrW];
                             corr_B = [corr_B this_corrB];
                             
                             ratio_W = [ratio_W this_w_ratio];
                             ratio_B = [ratio_B this_b_ratio];
+                            num_W = [num_W sum(inMiniBin_W(:))-num_NaN_W];
+                            num_B = [num_B sum(inMiniBin_B(:))-num_NaN_B];
                         end
-                        R.adjustMeanCOR(2*(i-1)+1,1) = nansum(corr_W)/nansum(ratio_W);
-                        R.adjustMeanCOR(2*(i-1)+2,1) = nansum(corr_B)/nansum(ratio_B);
+                        R.adjustMeanCOR(2*(i-1)+1,1) = nansum(corr_W)/nansum(num_W);
+                        R.adjustMeanCOR(2*(i-1)+2,1) = nansum(corr_B)/nansum(num_B);
                     end
                     clear VAR COV;
                     
@@ -828,7 +832,7 @@ switch(what)
     case 'EVAL:plotIcosahedron'         % Comparision plot of different parcellations
         g1 = [0.5 0.5 0.5]; % Gray 1
         %toPlot={'Icosahedron_42','Icosahedron_162','Icosahedron_362','Icosahedron_642','Icosahedron_1002'};
-        toPlot={'Icosahedron_42'};
+        toPlot={'Icosahedron_362'};
         CAT.linecolor={'r','b','b','b','g','k','k',g1};
         CAT.linestyle={'-','-',':','--','-','-',':','-'};
         CAT.linewidth=2;
@@ -852,8 +856,8 @@ switch(what)
             D.meanCOR=[];
             D.corr=[];
             D.adjustMeanCOR=[];
-            for s = 1:8
-                temp=load(sprintf('Eval_%s_Sphere_L_%s_%d_rate5.mat',toPlot{i},condType,s));
+            for s = 1:10
+                temp=load(sprintf('Eval_%s_Sphere_L_%s_%d_rate10.mat',toPlot{i},condType,s));
                 D.SN=[D.SN;temp.SN];
                 D.hem=[D.hem;temp.hem];
                 D.studyNum=[D.studyNum;temp.studyNum];
@@ -884,30 +888,6 @@ switch(what)
 %         lineplot(T.binC,T.N_B,'CAT',CAT,'split',T.parcel,'linecolor','b','errorcolor','k');
         
         set(gca,'XLim',[0 40],'YLim',[-0.01 0.06],'XTick', [5:5:35]);
-        set(gcf,'PaperPosition',[2 2 3.3 3]);
-        wysiwyg;
-    case 'EVAL:plotSpatial'         % Comparision plot of different parcellations
-        g1 = [0.5 0.5 0.5]; % Gray 1
-        toPlot={'Icosahedron_42'};
-        CAT.linecolor={'r','b','b','b','g','k','k',g1};
-        CAT.linestyle={'-','-',':','--','-','-',':','-'};
-        CAT.linewidth=2;
-        CAT.markertype='none';
-        CAT.errorcolor={'r','b','b','b','g','k','k',g1};
-        condType='all';
-        vararginoptions(varargin,{'toPlot','condType'});
-        T=[];
-        for i=1:length(toPlot)
-            D=load(sprintf('Eval_%s_Sphere_%s.mat',toPlot{i},condType));
-            TT=tapply(D,{'bin','SN','distmin','distmax'},{'adjustMeanCOR','mean','name','corrW','subset',D.bwParcel==0},...
-                {'adjustMeanCOR','mean','name','corrB','subset',D.bwParcel==1}); % Change the name of bwParcel; 0-within, 1-between
-            TT.parcel=ones(length(TT.SN),1)*i;
-            T=addstruct(T,TT);
-        end
-        T.DCBC=T.corrB-T.corrW;
-        T.binC = (T.distmin+T.distmax)/2;
-        lineplot(T.binC,T.DCBC,'CAT',CAT,'split',T.parcel,'leg',toPlot);
-        set(gca,'XLim',[0 40],'YLim',[-0.01 0.06],'XTick',[5:5:35]);
         set(gcf,'PaperPosition',[2 2 3.3 3]);
         wysiwyg;
     case 'ROI:defineROI'
