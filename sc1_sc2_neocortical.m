@@ -669,7 +669,7 @@ switch(what)
                             R.hem(in,1)     = h;
                             R.studyNum(in,1) = ts;
                             R.N(in,1)       = sum(inBin(:));
-                            R.avrDist(in,1) = mean(avrgD(inBin));
+                            %R.avrDist(in,1) = mean(avrgD(inBin));
                             R.bwParcel(in,1)= bw-1;
                             R.bin(in,1)     = i;
                             R.distmin(in,1) = bins(i);
@@ -680,12 +680,14 @@ switch(what)
                     end
                     clear VAR COV;
                     R.corr = R.meanCOV./sqrt(R.meanVAR);
-%                     num_w = R.N(R.bwParcel==0);
-%                     num_b = R.N(R.bwParcel==1);
-%                     weight = (1 ./ (1./num_w + 1./num_b)); 
-%                     weight = weight / sum(weight);
-                    %R.corr = R.corr .* [weight; weight];
-                    %R.weight = [weight; weight];
+                    
+                    % Add weighting scheme
+                    num_w = R.N(R.bwParcel==0);
+                    num_b = R.N(R.bwParcel==1);
+                    weight = (1 ./ (1./num_w + 1./num_b)); 
+                    weight = weight / sum(weight);
+                    R.weightedCorr = R.corr .* [weight; weight];
+                    R.weight = [weight; weight]; % Store the weighting
                     
                     fprintf('\n');
                     RR = addstruct(RR,R);
@@ -838,19 +840,19 @@ switch(what)
         else
             cor = [];
             for i=1:100
-                T=load(sprintf('Eval_%s_Sphere_L_%s_%d_5.mat',toPlot,condType,i));
+                T=load(sprintf('Eval_%s_Sphere_L_%s_%d_2.5.mat',toPlot,condType,i));
                 cor = [cor T.corr];
             end
             
-            T=load(sprintf('Eval_%s_Sphere_L_%s_1_5.mat',toPlot,condType));
-            %T.corr = nanmean(cor,2);
+            T=load(sprintf('Eval_%s_Sphere_L_%s_1_2.5.mat',toPlot,condType));
+            T.corr = nanmean(cor,2);
         end
         D=tapply(T,{'bin','SN','distmin','distmax','bwParcel'},{'corr'},{'avrDist'});
         %D=tapply(T,{'bin','SN','distmin','distmax'},{'corr','mean','name','corrW','subset',T.bwParcel==0},...
         %        {'corr','mean','name','corrB','subset',T.bwParcel==1});
         D.binC = (D.distmin+D.distmax)/2;
         %D.DCBC = D.corrW-D.corrB;
-        lineplot(D.binC,D.corr,'split',D.bwParcel,'CAT',CAT);
+        lineplot(D.binC,D.corr,'split',D.bwParcel,'CAT',CAT,'errorwidth',0.5);
         set(gca,'XLim',[0 40],'YLim',[-0.01 0.165],'XTick',[0:5:35]);
         drawline(0,'dir','horz');
         set(gcf,'PaperPosition',[2 2 3 3.7]);
