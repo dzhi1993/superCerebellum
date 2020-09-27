@@ -2,9 +2,10 @@
 function varargout=sc1_sc2_functionalAtlas(what,varargin)
 
 % Directories
-baseDir          = '/Users/maedbhking/Documents/Cerebellum_Cognition';
+%baseDir          = '/Users/maedbhking/Documents/Cerebellum_Cognition';
+baseDir          = 'D:\data';
 % baseDir          = '/Users/maedbhking/Remote/Documents2/Cerebellum_Cognition';
-baseDir            = '/Volumes/MotorControl/data/super_cerebellum_new';
+% baseDir            = '/Volumes/MotorControl/data/super_cerebellum_new';
 % baseDir          = '/Users/jdiedrichsen/Data/super_cerebellum_new';
 
 atlasDir='/Users/maedbhking/Documents/Atlas_templates/';
@@ -2310,8 +2311,7 @@ switch what
         
         % example: sc1_sc2_functionalAtlas('EVAL:crossval',2,'SC12_10cluster_group',1,'unique')
         
-        % load in func data to test (e.g. if map is sc1; func data should
-        % be sc2)
+        % load in func data to test (e.g. if map is sc1; func data should be sc2)
         load(fullfile(studyDir{data},'encoding','glm4','cereb_avrgDataStruct.mat'));
         
         D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
