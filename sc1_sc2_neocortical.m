@@ -890,115 +890,83 @@ switch(what)
         sn=returnSubjs;
         hem = [1 2];
         resolution = '32k';
-        taskSet = [1 2];
-        condType = 'unique'; % Evaluate on all or only unique conditions?
+        %taskSet = [1 2];
+        %condType = 'unique'; % Evaluate on all or only unique conditions?
         bins = [0:5:35];     % Spatial bins in mm
         parcel = [];         % N*2 matrix for both hemispheres
         RR=[];
-        ranMap=1;
         distFile = 'distAvrg_sp';
-        icoRes = 2562;
-        parType = 'random';
-        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile','icoRes','parType','ranMap'});
-        D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
+        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile'});
+        % D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
         numBins = numel(bins)-1;
         for h=hem
             load(fullfile(wbDir,'group32k',distFile));
-            % Now find the pairs that we care about to safe memory 
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            % CHANGE: Exclude only medial walll! 
-            % The node indices of medial wall are defined by taking the union of seven existing parcellations, including
-            % 'Glasser','Yeo17','Yeo7','Power2011','Yeo2015','Desikan', and 'Dextrieux', which stored as external 
-            % .mat files "medialWallIndex_%hem.mat" for both hems.
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%             mw = load(fullfile(wbDir, sprintf('group%s', resolution), sprintf('medialWallIndex_%s.mat', Hem{h})));
-%             labels = gifti(fullfile(wbDir, sprintf('group%s', resolution), sprintf('Icosahedron-%d.%s.%s.label.gii',icoRes,resolution,Hem{h})));
-%             
-%             % Here, we use it to find the union with the label-0 of Icosahedron-(icoRes) as our final medial wall
-%             % vertIdx is the indices that we want (without medial wall)
-%             vertIdx = setdiff(1:size(avrgDs), union(mw.mwIdx, find(labels.cdata(:,1)==0))); 
-            switch parType
-                case 'random'
-                    % if evaluating random parcellations
-                    vertIdx = find(parcel(:,h)~=0); % index is non-zero part
-                    par    = parcel(vertIdx,h);
-                case 'exist'
-                    V = gifti(sprintf('Glasser_2016.32k.%s.label.gii',Hem{h}));
-                    vertIdx = find(V.cdata(:)~=0); 
-                    par    = parcel.(string(Hem{h}));
-            end
+
+            % if evaluating random parcellations
+            vertIdx = find(parcel(:,h)~=0); % index is non-zero part
+            par    = parcel(vertIdx,h);
             avrgDs = avrgDs(vertIdx,vertIdx);
-            % END CHANGE 
             
             [row,col,avrgD]=find(avrgDs);
             inSp = sub2ind(size(avrgDs),row,col);
             sameReg=(bsxfun(@ne,par',par)+1);
             sameReg=sameReg(inSp);
             clear avrgDs par;
-            for ts = taskSet
-                D1=getrow(D,D.StudyNum==ts);
-                switch condType
-                    case 'unique'
-                        % if funcMap - only evaluate unique tasks in sc1 or sc2
-                        condIdx=D1.condNum(D1.overlap==0); % get index for unique tasks
-                    case 'all'
-                        condIdx=D1.condNum;
-                end
-                
-                for s=sn
-                    % CHANGE: This should be re-written to start from the wcon data
-                    % Start 
-                    A=gifti(fullfile(wbDir,subj_name{s},sprintf('%s.%s.%s.con.%s.func.gii',subj_name{s},Hem{h},studyDir{ts},resolution)));
-                    Data = [A.cdata(:,2:end-1) zeros(size(A.cdata,1),1)]; % bRemove intrstuction and add rest 
-                    Data = bsxfun(@rdivide,Data,sqrt(A.cdata(:,end)));      % Noise normalize 
-                    %Data = A.cdata;
-                    
-                    % End CHANGE 
-                    Data = Data(vertIdx,condIdx); % Take the right subset
-                    Data = bsxfun(@minus,Data,mean(Data,2));
-                    Data = single(Data');
-                    [K,P]=size(Data);
-                    clear A;
-                    
-                    SD = sqrt(sum(Data.^2)/K);
-                    VAR = (SD'*SD);
-                    COV = Data'*Data/K;
-                    %CORR=corr(Data);
-                    fprintf('%d',s);
-                    for bw=[1 2]
-                        for i=1:numBins
-                            fprintf('.');
-                            in = i+(bw-1)*numBins;
-                            inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
-                            R.SN(in,1)      = s;
-                            R.hem(in,1)     = h;
-                            R.studyNum(in,1) = ts;
-                            R.N(in,1)       = sum(~isnan(COV(inSp(inBin))));
-                            %R.avrDist(in,1) = mean(avrgD(inBin));
-                            R.bwParcel(in,1)= bw-1;
-                            R.bin(in,1)     = i;
-                            R.distmin(in,1) = bins(i);
-                            R.distmax(in,1) = bins(i+1);
-                            R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
-                            R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
-                            %R.corr(in,1) = nanmean(CORR(inSp(inBin)));
-                        end
+
+            for s=sn
+                % CHANGE: This should be re-written to start from the wcon data
+                % Start 
+                A=gifti(fullfile(wbDir,'glm8',subj_name{s},sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution)));
+                %Data = [A.cdata(:,2:end-1) zeros(size(A.cdata,1),1)]; % bRemove intrstuction and add rest 
+                %Data = bsxfun(@rdivide,Data,sqrt(A.cdata(:,end)));      % Noise normalize 
+                Data = A.cdata;
+
+                % End CHANGE 
+                Data = Data(vertIdx,:); % Take the right subset
+                Data = bsxfun(@minus,Data,mean(Data,2));
+                Data = single(Data');
+                [K,P]=size(Data);
+                clear A;
+
+                SD = sqrt(sum(Data.^2)/K);
+                VAR = (SD'*SD);
+                COV = Data'*Data/K;
+                %CORR=corr(Data);
+                fprintf('%d',s);
+                for bw=[1 2]
+                    for i=1:numBins
+                        fprintf('.');
+                        in = i+(bw-1)*numBins;
+                        inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
+                        R.SN(in,1)      = s;
+                        R.hem(in,1)     = h;
+                        %R.studyNum(in,1) = ts;
+                        R.N(in,1)       = sum(~isnan(COV(inSp(inBin))));
+                        %R.avrDist(in,1) = mean(avrgD(inBin));
+                        R.bwParcel(in,1)= bw-1;
+                        R.bin(in,1)     = i;
+                        R.distmin(in,1) = bins(i);
+                        R.distmax(in,1) = bins(i+1);
+                        R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
+                        R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
+                        %R.corr(in,1) = nanmean(CORR(inSp(inBin)));
                     end
-                    clear VAR COV;
-                    R.corr = R.meanCOV./R.meanVAR;
-                    
-                    % Add weighting scheme
-                    num_w = R.N(R.bwParcel==0);
-                    num_b = R.N(R.bwParcel==1);
-                    weight = (1 ./ (1./num_w + 1./num_b)); 
-                    weight = weight / sum(weight);
-                    R.weightedCorr = R.corr .* [weight; weight];
-                    R.weight = [weight; weight]; % Store the weighting
-                    
-                    fprintf('\n');
-                    RR = addstruct(RR,R);
                 end
+                clear VAR COV;
+                R.corr = R.meanCOV./R.meanVAR;
+
+                % Add weighting scheme
+                num_w = R.N(R.bwParcel==0);
+                num_b = R.N(R.bwParcel==1);
+                weight = (1 ./ (1./num_w + 1./num_b)); 
+                weight = weight / sum(weight);
+                R.weightedCorr = R.corr .* [weight; weight];
+                R.weight = [weight; weight]; % Store the weighting
+
+                fprintf('\n');
+                RR = addstruct(RR,R);
             end
+            
         end
         varargout={RR};
     case 'EVAL:doEval'           % Recipe for producing the DCBC evaluation results
