@@ -5,6 +5,7 @@ function varargout=sc1_sc2_neocortical(what,varargin)
 
 %baseDir    = 'D:/data';
 baseDir    = 'Z:\data\super_cerebellum_new';
+hcpDir     = 'Z:\data\HCP_100';
 rootDir    = 'D:/data';
 wbDir      = fullfile(rootDir,'sc1','surfaceWB');
 fsDir      = fullfile(baseDir,'sc1','surfaceFreesurfer');
@@ -13,7 +14,7 @@ anatomicalDir = fullfile(baseDir,'sc1','anatomicals');
 regDir     = fullfile(baseDir,'sc1','RegionOfInterest');
 resDir     =  'D:\python_workspace\brain_parcellation_project\agglomerative clustering\cortex_clustering_results';
 resDir2    =  'D:\python_workspace\brain_parcellation_project\agglomerative clustering\subject_clustering_results';
-glmDir     = 'GLM_firstlevel_4';
+glmDir     = 'D:\data\sc2\encoding\glm7';
 studyDir  = {'sc1','sc2'};
 Hem       = {'L','R'};
 hemname   = {'CortexLeft','CortexRight'};
@@ -22,7 +23,8 @@ subj_name = {'s01','s02','s03','s04','s05','s06','s07','s08','s09','s10','s11',.
     's12','s13','s14','s15','s16','s17','s18','s19','s20','s21','s22','s23','s24',...
     's25','s26','s27','s28','s29','s30','s31'};
 returnSubjs=[2,3,4,6,8,9,10,12,14,15,17,18,19,20,21,22,24,25,26,27,28,29,30,31];
-
+hcp_subj_name = {'100206','100307','100408','100610','101006','101107','101309','101915','102008','102109',...
+    '210011','210012','210415','210617','211114'};
 switch(what)
     case 'SURF:recon_all'                    % STEP 2.2: Calls recon_all
         % STUDY 1 ONLY
@@ -285,7 +287,7 @@ switch(what)
                 resMS=(G{1}.cdata(:,end)+G{2}.cdata(:,end))/2;
                 W = [wbeta{1} wbeta{2}];
                 W = bsxfun(@rdivide,W,sqrt(resMS)); % Common noise normalization
-                outfile = fullfile(surfDir,sprintf('%s.%s.wcon.%s.func.gii',subj_name{s},Hem{h},resolution));
+                outfile = fullfile(surfDir,sprintf('%s.%s.wbeta.%s.func.gii',subj_name{s},Hem{h},resolution));
                 Go=surf_makeFuncGifti(W,'columnNames',T.condNames,'anatomicalStruct',hemname{h});
                 save(Go,outfile);
                 fprintf('combined %s %s \n',subj_name{s},Hem{h});
@@ -319,23 +321,23 @@ switch(what)
         end;
         delete('temp.func.gii');
     case 'SURF:indvSmooth'
-        kernel =12;
+        kernel =2;
         for sn = returnSubjs
-            cd(fullfile(rootDir,'sc1','surfaceWB',subj_name{sn}));
-            for i=1:100
-                for h=1:2
-                    fname = sprintf('%s.%s.sc1.rcon_%d.32k.func.gii',subj_name{sn},Hem{h},i);
-                    oname = sprintf('%s.%s.sc1.srcon_%d.32k.func.gii',subj_name{sn},Hem{h},i);
-                    %surf = sprintf('%s.%s.inflated.32k.surf.gii',subj_name{sn},Hem{h});
-                    group_surf = fullfile(wbDir,'group32k',sprintf('fs_LR.32k.%s.midthickness.surf.gii',Hem{h}));
-                    %A=gifti(fname);
-                    %A.cdata(isnan(sum(A.cdata,2)),:)=0;
-                    %save(A,'temp.func.gii');
-                    com = sprintf('wb_command -metric-smoothing %s %s %d %s -fix-zeros',group_surf,fname,kernel,oname);
-                    system(com);
-                end
-                %delete('temp.func.gii');
+            cd(fullfile(rootDir,'sc1','surfaceWB','glm8',subj_name{sn}));
+            
+            for h=1:2
+                fname = sprintf('%s.%s.wcon.32k.func.gii',subj_name{sn},Hem{h});
+                oname = sprintf('%s.%s.swcon.32k.func.gii',subj_name{sn},Hem{h});
+                %surf = sprintf('%s.%s.inflated.32k.surf.gii',subj_name{sn},Hem{h});
+                group_surf = fullfile(wbDir,'group32k',sprintf('fs_LR.32k.%s.midthickness.surf.gii',Hem{h}));
+                %A=gifti(fname);
+                %A.cdata(isnan(sum(A.cdata,2)),:)=0;
+                %save(A,'temp.func.gii');
+                com = sprintf('wb_command -metric-smoothing %s %s %d %s -fix-zeros',group_surf,fname,kernel,oname);
+                system(com);
             end
+            %delete('temp.func.gii');
+            
         end
     case 'SURF:resample32k'  % Resample functional data from group164 to group32
         hemis=[1 2];
@@ -665,227 +667,87 @@ switch(what)
             end
         end
         varargout={RR};
-    case 'Eval:DCBC_test'             % Get the DCBC evaluation
+    case 'Eval:DCBC_volume'
         sn=returnSubjs;
-        hem = [1 2];
-        resolution = '32k';
         taskSet = [1 2];
-        condType = 'unique'; % Evaluate on all or only unique conditions?
-        bins = [0:5:35];     % Spatial bins in mm
+        sess = 1; % sess = 1, 2, 'average', or 'all'
+        conds = 1:32; % Evaluate on all or only unique conditions?
+        bins = [0:5:35];
         parcel = [];         % N*2 matrix for both hemispheres
-        RR=[];
-        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile','icoRes','parType','ranMap'});
-        D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
+        RR = [];
+        distFile = [];
+        vararginoptions(varargin,{'sn','sess','bins','parcel','conds','taskSet','distFile'});
         numBins = numel(bins)-1;
-        for h=hem
-            % Making distance metric 1024 nodes
-%             distMat = zeros(1024);
-%             N = size(distMat,1);
-%             for i=1:N
-%                 for j=1:N
-%                     [a1, b1] = ind2sub([32 32], i);
-%                     [a2, b2] = ind2sub([32 32], j);
-%                     distMat(i,j) = sqrt((a1-a2)^2 + (b1-b2)^2);
-%                 end
-%             end
-            load('distSphere_test.mat','distGOD');
-            avrgDs = distGOD;
+        
+        vertIdx = find(parcel~=0); % index is non-zero part
+        par    = parcel(vertIdx);
+        distFile = distFile(vertIdx,vertIdx);
+        
+        [row,col,dist]=find(distFile);
+        inSp = sub2ind(size(distFile),row,col);
+        sameReg=(bsxfun(@ne,par',par)+1);
+        sameReg=sameReg(inSp);
+        clear distFile par;
+        
+        % Load all functional data in a single .mat file
+        load(fullfile(glmDir,'striatum_avrgDataStruct.mat'))
+        Data_all = T.data;
+        for s=sn
+            if strcmp(sess,'average')
+                Data_1 = Data_all(T.SN==s & T.sess==1,:)';
+                Data_2 = Data_all(T.SN==s & T.sess==2,:)';
+                Data = mean(Data_1 + Data_2);
+            elseif sess == 1 || sess == 2
+                Data = Data_all(T.SN==s & T.sess==sess,:)';
+            elseif strcmp(sess,'all')
+                Data = Data_all(T.SN==s,:)'; % contatenate session 1 and 2
+            else
+                error('Parameter sess must be 1, 2, average, or all.');
+            end
+            Data = Data_all(T.SN==s & T.sess==sess,:)';
+            Data = Data(vertIdx,conds); % Take the right subset
+            Data = bsxfun(@minus,Data,mean(Data,2));
+            Data = single(Data');
+            [K,P]=size(Data);
+            clear A;
 
-            vertIdx = find(parcel(:,h)~=0); % index is non-zero part
-            par    = parcel(vertIdx,h);
-            avrgDs = avrgDs(vertIdx,vertIdx);
-                    
-            [row,col,avrgD]=find(avrgDs);
-            inSp = sub2ind(size(avrgDs),row,col);
-            sameReg=(bsxfun(@ne,par',par)+1);
-            sameReg=sameReg(inSp);
-            clear avrgDs par;
-            for ts = taskSet          
-                for s=sn
-                    
-                    % making random functional map (This probably wrong!)
-                    %random = normrnd(0,2,[32,32,30]);
-                    %Data = smooth3(random,'gaussian',11,8);
-                    %Data = reshape(Data,[1024,30]);
-                    outfile='tmp.func.gii';
-                    smoothfile='smooth_tmp.func.gii';
-                    random = [];
-                    for num_cons = 1:60
-                        random = [random normrnd(0,1,[1002,1])];
-                    end
-                    G=surf_makeFuncGifti(single(random));
-                    save(G,outfile);
-                    com = sprintf('wb_command -metric-smoothing %s tmp.func.gii %d %s -fix-zeros','Sphere.1k.L.surf.gii',100,smoothfile);
-                    system(com);
-                    delete('tmp.func.gii');
-                    
-                    A = gifti(smoothfile);
-                    Data = A.cdata;
-                    delete('smooth_tmp.func.gii');
-                    
-                    % Compute mean VAR and COV
-                    Data = Data(vertIdx,:); % Take the right subset
-                    Data = bsxfun(@minus,Data,mean(Data,2));
-                    Data = single(Data');
-                    [K,P]=size(Data);
-                    clear A;
-                    
-                    SD = sqrt(sum(Data.^2)/K);
-                    VAR = (SD'*SD);
-                    COV = Data'*Data/K;
-                    %COR = corrcoef(Data);
-                    fprintf('%d',s);
-                    for bw=[1 2]
-                        for i=1:numBins
-                            fprintf('.');
-                            in = i+(bw-1)*numBins;
-                            inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
-                            R.SN(in,1)      = s;
-                            R.hem(in,1)     = h;
-                            R.studyNum(in,1) = ts;
-                            R.N(in,1)       = sum(inBin(:));
-                            R.bwParcel(in,1)= bw-1;
-                            R.bin(in,1)     = i;
-                            R.distmin(in,1) = bins(i);
-                            R.distmax(in,1) = bins(i+1);
-                            R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
-                            R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
-                            %R.corr(in,1) = nanmean(COR(inSp(inBin)));
-                        end
-                    end
-                    clear VAR COV;
-                    R.corr = R.meanCOV./R.meanVAR;
-                    
-                    % Add weighting scheme
-                    num_w = R.N(R.bwParcel==0);
-                    num_b = R.N(R.bwParcel==1);
-                    weight = (1 ./ (1./num_w + 1./num_b)); 
-                    weight = weight / sum(weight);
-                    R.weightedCorr = R.corr .* [weight; weight];
-                    R.weight = [weight; weight]; % Store the weighting
-                    
-                    fprintf('\n');
-                    RR = addstruct(RR,R);
+            SD = sqrt(sum(Data.^2)/K);
+            VAR = (SD'*SD);
+            COV = Data'*Data/K;
+            %CORR=corr(Data);
+            fprintf('%d',s);
+            for bw=[1 2]
+                for i=1:numBins
+                    fprintf('.');
+                    in = i+(bw-1)*numBins;
+                    inBin = dist>bins(i) & dist<=bins(i+1) & sameReg==bw;
+                    R.SN(in,1)      = s;
+                    R.N(in,1)       = sum(~isnan(COV(inSp(inBin))));
+                    %R.avrDist(in,1) = mean(avrgD(inBin));
+                    R.bwParcel(in,1)= bw-1;
+                    R.bin(in,1)     = i;
+                    R.distmin(in,1) = bins(i);
+                    R.distmax(in,1) = bins(i+1);
+                    R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
+                    R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
+                    %R.corr(in,1) = nanmean(CORR(inSp(inBin)));
                 end
             end
+            clear VAR COV;
+            R.corr = R.meanCOV./R.meanVAR;
+
+            % Add weighting scheme
+            num_w = R.N(R.bwParcel==0);
+            num_b = R.N(R.bwParcel==1);
+            weight = (1 ./ (1./num_w + 1./num_b)); 
+            weight = weight / sum(weight);
+            R.weightedCorr = R.corr .* [weight; weight];
+            R.weight = [weight; weight]; % Store the weighting
+
+            fprintf('\n');
+            RR = addstruct(RR,R);
         end
         varargout={RR};
-    case 'Eval:DCBC_1'             % Get the DCBC evaluation
-        sn=returnSubjs;
-        hem = [1 2];
-        resolution = '32k';
-        taskSet = [1 2];
-        condType = 'unique'; % Evaluate on all or only unique conditions?
-        bins = [0:5:35];     % Spatial bins in mm
-        parcel = [];         % N*2 matrix for both hemispheres
-        RR=[];
-        ranMap=1;
-        distFile = 'distAvrg_sp';
-        icoRes = 2562;
-        parType = 'random';
-        vararginoptions(varargin,{'sn','hem','bins','parcel','condType','taskSet','resolution','distFile','icoRes','parType','ranMap'});
-        D=dload(fullfile(baseDir,'sc1_sc2_taskConds.txt'));
-        numBins = numel(bins)-1;
-        for h=hem
-            switch parType
-                case 'random'
-                    % if evaluating random parcellations
-                    vertIdx = find(parcel(:,h)~=0); % index is non-zero part
-                    par    = parcel(vertIdx,h);
-                case 'exist'
-                    V = gifti(sprintf('Glasser_2016.32k.%s.label.gii',Hem{h}));
-                    vertIdx = find(V.cdata(:)~=0); 
-                    par    = parcel.(string(Hem{h}));
-            end
-            
-            load(fullfile(wbDir,'group32k',distFile));
-
-            avrgDs = avrgDs(vertIdx,vertIdx);
-            % END CHANGE 
-
-            [row,col,avrgD]=find(avrgDs);
-            inSp = sub2ind(size(avrgDs),row,col);
-            sameReg=(bsxfun(@ne,par',par)+1);
-            sameReg=sameReg(inSp);
-            clear avrgDs par row col;
-
-            for ts = taskSet
-                D1=getrow(D,D.StudyNum==ts);
-                switch condType
-                    case 'unique'
-                        % if funcMap - only evaluate unique tasks in sc1 or sc2
-                        condIdx=D1.condNum(D1.overlap==0); % get index for unique tasks
-                    case 'all'
-                        condIdx=D1.condNum;
-                end
-                
-                for s=1:100
-                    outfile='tmp.func.gii';
-                    smoothfile='smooth_tmp.func.gii';
-                    random = [];
-                    for num_cons = 1:60
-                        random = [random normrnd(0,1,[32492,1])];
-                    end
-                    G=surf_makeFuncGifti(single(random));
-                    save(G,outfile);
-                    com = sprintf('wb_command -metric-smoothing %s tmp.func.gii %d %s -fix-zeros','fs_LR.32k.L.sphere.surf.gii',12,smoothfile);
-                    system(com);
-                    delete('tmp.func.gii');
-                    
-                    A = gifti(smoothfile);
-                    Data = A.cdata;
-                    delete('smooth_tmp.func.gii');
-                    
-                    %A=gifti(fullfile(wbDir,'s03',sprintf('%s.%s.%s.srcon_%d.%s.func.gii','s03',Hem{h},studyDir{ts},s,resolution)));
-                    %Data = A.cdata;
-                    
-                    Data = Data(vertIdx,:); % Take the right subset
-                    Data = bsxfun(@minus,Data,mean(Data,2));
-                    Data = single(Data');
-                    [K,P]=size(Data);
-                    clear A;
-                    
-                    SD = sqrt(sum(Data.^2)/K);
-                    VAR = (SD'*SD);
-                    COV = Data'*Data/K;
-                    %CORR=corr(Data);
-                    fprintf('%d',s);
-                    for bw=[1 2]
-                        for i=1:numBins
-                            fprintf('.');
-                            in = i+(bw-1)*numBins;
-                            inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
-                            R.SN(in,1)      = s;
-                            R.hem(in,1)     = h;
-                            R.studyNum(in,1) = ts;
-                            R.N(in,1)       = sum(inBin(:));
-                            %R.avrDist(in,1) = mean(avrgD(inBin));
-                            R.bwParcel(in,1)= bw-1;
-                            R.bin(in,1)     = i;
-                            R.distmin(in,1) = bins(i);
-                            R.distmax(in,1) = bins(i+1);
-                            R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
-                            R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
-                            %R.corr(in,1) = nanmean(CORR(inSp(inBin)));
-                        end
-                    end
-                    clear VAR COV;
-                    R.corr = R.meanCOV./R.meanVAR;
-                    
-                    % Add weighting scheme
-                    num_w = R.N(R.bwParcel==0);
-                    num_b = R.N(R.bwParcel==1);
-                    weight = (1 ./ (1./num_w + 1./num_b)); 
-                    weight = weight / sum(weight);
-                    R.weightedCorr = R.corr .* [weight; weight];
-                    R.weight = [weight; weight]; % Store the weighting
-                    
-                    fprintf('\n');
-                    RR = addstruct(RR,R);
-                end
-            end
-        end
-        varargout={RR};        
     case 'Eval:DCBC'             % Get the DCBC evaluation
         sn=returnSubjs;
         hem = [1 2];
@@ -938,6 +800,7 @@ switch(what)
                         fprintf('.');
                         in = i+(bw-1)*numBins;
                         inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
+                        %inBin = avrgD>bins(i) & avrgD<=bins(i+1);
                         R.SN(in,1)      = s;
                         R.hem(in,1)     = h;
                         %R.studyNum(in,1) = ts;
@@ -969,6 +832,116 @@ switch(what)
             
         end
         varargout={RR};
+    case 'Eval:DCBC_HCP_rfmri'             % Get the DCBC evaluation
+            sn=[1,2,3,4,5,6,7,8,9,10];
+            hem = [1 2];
+            resolution = '32k';
+            %taskSet = [1 2];
+            %condType = 'unique'; % Evaluate on all or only unique conditions?
+            bins = [0:5:35];     % Spatial bins in mm
+            parcel = [];         % N*2 matrix for both hemispheres
+            RR=[];
+            sess = [1 2];
+            direction = {'LR','RL'};
+            distFile = 'distAvrg_sp';
+            vararginoptions(varargin,{'sn','hem','bins','parcel','sess','condType','taskSet','resolution','distFile'});
+            numBins = numel(bins)-1;
+            sub_list = textscan(fopen(fullfile(rootDir,'subjects.txt')),'%s');
+            sub_list = sub_list{1};
+            for h=hem
+                load(fullfile(wbDir,'group32k',distFile));
+
+                % if evaluating random parcellations
+                vertIdx = find(parcel(:,h)~=0); % index is non-zero part
+                par    = parcel(vertIdx,h);
+                avrgDs = avrgDs(vertIdx,vertIdx);
+
+                [row,col,avrgD]=find(avrgDs);
+                inSp = sub2ind(size(avrgDs),row,col);
+                sameReg=(bsxfun(@ne,par',par)+1);
+                sameReg=sameReg(inSp);
+                clear avrgDs par;
+%                 V = gifti(sprintf('Glasser_2016.32k.%s.label.gii',Hem{h}));
+%                 v_i = find(V.cdata(:)==0);
+                
+                for s=sn
+                    % loading rfmri time series (4 runs) and average them
+                    Data = [];
+                    for se = sess
+                        for k = 1:length(direction)
+                            A = cifti_read(fullfile(rootDir,sub_list{s},'MNINonLinear','Results',sprintf('rfMRI_REST%d_%s',se,direction{k}),...
+                                sprintf('rfMRI_REST%d_%s_Atlas_hp2000_clean.dtseries.nii',se,direction{k})));
+                            start = A.diminfo{1}.models{h}.start;
+                            count = A.diminfo{1}.models{h}.count;
+                            V = A.diminfo{1}.models{h}.vertlist + 1;
+                            % Data = cat(3, Data, A.cdata(start:start+count-1,:));
+                            
+                            p = NaN(32492, 1200);
+                            p(V,:)=A.cdata(start:start+count-1,:);
+                            % p = bsxfun(@minus,p,mean(p,2));
+                            p=normalize(p,2);
+                            Data = [Data p];
+                        end
+                    end
+                    
+%                     p = NaN(32492, 1200);
+%                     p(v_i,:) = 0;
+%                   
+%                     Data = mean(Data, 3);
+%                     for j = 1:length(Data)
+%                         first_non_NaN_index_of_X = find(isnan(p), 1);
+%                         p(first_non_NaN_index_of_X,:) = Data(j,:);
+%                     end
+% 
+%                     Data = single(p');
+                    Data = Data(vertIdx,:); % Take the right subset
+                    %Data = bsxfun(@minus,Data,mean(Data,2));
+                    Data = single(Data');
+                    [K,P]=size(Data);
+                    clear A;
+
+                    SD = sqrt(sum(Data.^2)/K);
+                    VAR = (SD'*SD);
+                    COV = Data'*Data/K;
+                    %CORR=corr(Data);
+                    fprintf('%d',s);
+                    for bw=[1 2]
+                        for i=1:numBins
+                            fprintf('.');
+                            in = i+(bw-1)*numBins;
+                            inBin = avrgD>bins(i) & avrgD<=bins(i+1) & sameReg==bw;
+                            %inBin = avrgD>bins(i) & avrgD<=bins(i+1);
+                            R.SN(in,1)      = s;
+                            R.hem(in,1)     = h;
+                            %R.studyNum(in,1) = ts;
+                            R.N(in,1)       = sum(~isnan(COV(inSp(inBin))));
+                            %R.avrDist(in,1) = mean(avrgD(inBin));
+                            R.bwParcel(in,1)= bw-1;
+                            R.bin(in,1)     = i;
+                            R.distmin(in,1) = bins(i);
+                            R.distmax(in,1) = bins(i+1);
+                            R.meanCOV(in,1) = nanmean(COV(inSp(inBin)));
+                            R.meanVAR(in,1) = nanmean(VAR(inSp(inBin)));
+                            %R.corr(in,1) = nanmean(CORR(inSp(inBin)));
+                        end
+                    end
+                    clear VAR COV;
+                    R.corr = R.meanCOV./R.meanVAR;
+
+                    % Add weighting scheme
+                    num_w = R.N(R.bwParcel==0);
+                    num_b = R.N(R.bwParcel==1);
+                    weight = (1 ./ (1./num_w + 1./num_b)); 
+                    weight = weight / sum(weight);
+                    R.weightedCorr = R.corr .* [weight; weight];
+                    R.weight = [weight; weight]; % Store the weighting
+
+                    fprintf('\n');
+                    RR = addstruct(RR,R);
+                end
+
+            end
+            varargout={RR};
     case 'EVAL:doEval'           % Recipe for producing the DCBC evaluation results
         sn = returnSubjs;
         taskSet = [1 2];
@@ -1044,33 +1017,38 @@ switch(what)
         toPlot = 'Power2011';
         condType='all';
         clusters = 7;
+        bins = 35;
         CAT.linecolor={'k','r'};
         CAT.linestyle={'-','-'};
         CAT.linewidth=2;
         CAT.markertype='none';
         %CAT.errorcolor={'k','r'};
-        vararginoptions(varargin,{'toPlot','condType','clusters'});
+        vararginoptions(varargin,{'toPlot','condType','clusters','bins'});
         
         if strcmp(toPlot,'Spec')
             T=load(fullfile(wbDir, 'group32k', sprintf('Eval_%s_Avrg_%s_%d.mat', toPlot,condType,clusters)));
         else
             cor = [];
             DCBC = [];
-            for i=1:1
-                T=load(sprintf('Eval_%s_Sphere_L_%s_%d_1.mat',toPlot,condType,i));
-                %T=load(sprintf('Eval_%s_Sphere_sc1_%s.mat',toPlot,condType));
-                %T=load(sprintf('testEval_%d.mat',i));
-                cor = [cor T.corr];
-                within = T.corr(T.bwParcel==0);
-                between = T.corr(T.bwParcel==1);
-                within = reshape(within,[35, 24]);
-                between = reshape(between,[35, 24]);
-                tmp = within-between;
-                DCBC = [DCBC sum(tmp,'omitnan')'];
-            end
-            %T=load(sprintf('Eval_%s_avrg_sc1_%s.mat',toPlot,condType));
-            T=load(sprintf('Eval_%s_Sphere_L_%s_1_1.mat',toPlot,condType));
-            T.corr = nanmean(cor,2);
+
+            T=load(sprintf('Eval_%s_Sphere_HCP_%s.mat',toPlot,condType));
+            %T=load(sprintf('Eval_%s_Sphere_sc1_%s.mat',toPlot,condType));
+            %T=load(sprintf('testEval_%d.mat',i));
+            cor = [cor T.corr];
+            within = T.corr(T.bwParcel==0);
+            between = T.corr(T.bwParcel==1);
+            within = reshape(within,[size(within,1)/2, 2]);
+            within = mean(within,2);
+            between = reshape(between,[size(between,1)/2, 2]);
+            between = mean(between,2);
+            within = reshape(within,[bins, 24]);
+            between = reshape(between,[bins, 24]);
+            tmp = within-between;
+            DCBC = [DCBC sum(tmp,'omitnan')'];
+
+%             %T=load(sprintf('Eval_%s_avrg_sc1_%s.mat',toPlot,condType));
+%             T=load(sprintf('Eval_%s_Sphere_L_%s_1_1.mat',toPlot,condType));
+%             T.corr = nanmean(cor,2);
         end
         D=tapply(T,{'bin','SN','distmin','distmax','bwParcel'},{'corr'});
         %D=tapply(T,{'bin','SN','distmin','distmax'},{'corr','mean','name','corrW','subset',T.bwParcel==0},...
@@ -1083,6 +1061,26 @@ switch(what)
         set(gcf,'PaperPosition',[2 2 3 3.7]);
         wysiwyg;
         %keyboard;
+        varargout={DCBC};
+    case 'EVAL:getDCBC'       % Plots a single evaluation
+        toPlot = 'Power2011';
+        condType='all';
+        clusters = 7;
+        bin_width = 5;
+        bins = 35;
+        num_sn = 24;
+        DCBC=[];
+        vararginoptions(varargin,{'toPlot','condType','clusters','bin_width','num_sn','bins'});
+        
+        T=load(sprintf('Eval_%s_volume_MDTB_all_bin=%d.mat',toPlot,bin_width));
+
+        within = T.corr(T.bwParcel==0);
+        between = T.corr(T.bwParcel==1);
+        within = reshape(within,[bins, num_sn]);
+        between = reshape(between,[bins, num_sn]);
+        tmp = within-between;
+        DCBC = [DCBC sum(tmp,'omitnan')'];
+
         varargout={DCBC};
     case 'EVAL:plotEval'         % Comparision plot of different parcellations
         g1 = [0.5 0.5 0.5]; % Gray 1
@@ -1323,12 +1321,12 @@ switch(what)
         wysiwyg;
     case 'GRAD:compute'             % Computes local gradient
         cd(fullfile(wbDir,'group32k'));
-        normalize=0; % Normalize each location before computing the gradient?
+        normalization=0; % Normalize each location before computing the gradient?
         vararginoptions(varargin,{'normalize'})
         for h=1:2
             sname = sprintf('fs_LR.32k.%s.midthickness.surf.gii',Hem{h});
             fname = sprintf('group.swcon.%s.func.gii',Hem{h});
-            if (normalize)
+            if (normalization)
                 A = gifti(fname);
                 X = A.cdata;
                 X = bsxfun(@rdivide,X,sqrt(sum(X.^2,2)));
